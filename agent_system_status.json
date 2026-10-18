@@ -1,0 +1,58 @@
+{
+  "operational_agents": {
+    "Driver Safety Agent": {
+      "status": "active",
+      "trust_weight": 1.5
+    },
+    "Vehicle Health Agent": {
+      "status": "active",
+      "trust_weight": 1.4
+    },
+    "Weather Impact Agent": {
+      "status": "active",
+      "trust_weight": 1.3
+    },
+    "Congestion Monitoring Agent": {
+      "status": "active",
+      "trust_weight": 1.2
+    }
+  },
+  "tactical_agents": {
+    "Demand Assessment Agent": {
+      "status": "active",
+      "trust_weight": 1.0
+    },
+    "Fleet Allocation Agent": {
+      "status": "active",
+      "trust_weight": 0.9
+    },
+    "Scheduling Adjustment Agent": {
+      "status": "active",
+      "trust_weight": 0.8
+    },
+    "Route Optimization Agent": {
+      "status": "active",
+      "trust_weight": 0.85
+    }
+  },
+  "supervisor_status": {
+    "status": "active",
+    "conflicts_resolved": 7293,
+    "last_updated": "2026-09-28T22:23:36.678067"
+  },
+  "total_conflicts_resolved": 7293,
+  "resolution_strategy_counts": {
+    "safety_override": 211,
+    "weighted_voting": 7082,
+    "combined_actions": 0
+  },
+  "average_trust_weights": {
+    "Driver Safety Agent": 1.5,
+    "Vehicle Health Agent": 1.4000000000000004,
+    "Weather Impact Agent": 1.3000000000000003,
+    "Congestion Monitoring Agent": 1.2,
+    "Demand Assessment Agent": 1.0,
+    "Fleet Allocation Agent": 0.9000000000000005,
+    "Scheduling Adjustment Agent": 0.7999999999999998
+  }
+}
