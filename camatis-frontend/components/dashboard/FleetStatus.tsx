@@ -93,11 +93,11 @@ export default function FleetStatus({ results }: { results: any[] }) {
                 <div className="w-full bg-slate-100 rounded-full h-2.5">
                   <div 
                     className="bg-green-500 h-2.5 rounded-full transition-all duration-500" 
-                    style={{ width: `${(routesMinorChanges / results.length * 100).toFixed(1)}%` }}
+                    style={{ width: `${(routesMinorChanges / (results.length || 1) * 100).toFixed(1)}%` }}
                   />
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  {((routesMinorChanges / results.length) * 100).toFixed(0)}% need minor adjustment
+                  {((routesMinorChanges / (results.length || 1)) * 100).toFixed(0)}% need minor adjustment
                 </p>
               </div>
 
@@ -110,11 +110,11 @@ export default function FleetStatus({ results }: { results: any[] }) {
                 <div className="w-full bg-slate-100 rounded-full h-2.5">
                   <div 
                     className="bg-blue-500 h-2.5 rounded-full transition-all duration-500" 
-                    style={{ width: `${(routesModerateChanges / results.length * 100).toFixed(1)}%` }}
+                    style={{ width: `${(routesModerateChanges / (results.length || 1) * 100).toFixed(1)}%` }}
                   />
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  {((routesModerateChanges / results.length) * 100).toFixed(0)}% need moderate reinforcement
+                  {((routesModerateChanges / (results.length || 1)) * 100).toFixed(0)}% need moderate reinforcement
                 </p>
               </div>
 
@@ -127,11 +127,11 @@ export default function FleetStatus({ results }: { results: any[] }) {
                 <div className="w-full bg-slate-100 rounded-full h-2.5">
                   <div 
                     className="bg-orange-500 h-2.5 rounded-full transition-all duration-500" 
-                    style={{ width: `${(routesMajorChanges / results.length * 100).toFixed(1)}%` }}
+                    style={{ width: `${(routesMajorChanges / (results.length || 1) * 100).toFixed(1)}%` }}
                   />
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  {((routesMajorChanges / results.length) * 100).toFixed(0)}% need significant expansion
+                  {((routesMajorChanges / (results.length || 1)) * 100).toFixed(0)}% need significant expansion
                 </p>
               </div>
 
@@ -145,11 +145,11 @@ export default function FleetStatus({ results }: { results: any[] }) {
                   <div className="w-full bg-slate-100 rounded-full h-2.5">
                     <div 
                       className="bg-red-500 h-2.5 rounded-full transition-all duration-500" 
-                      style={{ width: `${(routesWithAnomalies / results.length * 100).toFixed(1)}%` }}
+                      style={{ width: `${(routesWithAnomalies / (results.length || 1) * 100).toFixed(1)}%` }}
                     />
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    {((routesWithAnomalies / results.length) * 100).toFixed(0)}% showing unusual patterns
+                    {((routesWithAnomalies / (results.length || 1)) * 100).toFixed(0)}% showing unusual patterns
                   </p>
                 </div>
               )}

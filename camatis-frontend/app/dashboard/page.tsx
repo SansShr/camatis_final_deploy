@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
 import StatsCards from "@/components/dashboard/StatsCards";
 import DemandChart from "@/components/dashboard/DemandChart";
@@ -13,7 +13,7 @@ import WeatherImpact from "@/components/dashboard/WeatherImpact";
 import AgentDecisions from "@/components/dashboard/AgentDecisions";
 import ConflictResolutionPanel from "@/components/dashboard/ConflictResolutionPanel";
 import CostEfficiency from "@/components/dashboard/CostEfficiency";
-import { postOptimize, getDashboard, getResults } from "@/lib/api";
+import { postOptimize, getDashboard, getResults, getDataSource } from "@/lib/api";
 
 export default function DashboardPage() {
   const [optimizing, setOptimizing] = useState(false);
@@ -24,14 +24,29 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string>("");
 
+  const [savedData, setSavedData] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const refreshing = useRef(false);
+
   const fetchData = async () => {
-    const [dashboard, resultsData] = await Promise.all([getDashboard(), getResults()]);
-    const totalBuses = (resultsData as any[]).reduce((sum, r) => sum + (r.buses_added || 0), 0) + (resultsData?.length || 0);
-    setRealBuses(totalBuses);
-    setDashboardData(dashboard);
-    setResults(resultsData);
-    setLastUpdated(new Date().toLocaleTimeString());
-    setLoading(false);
+    if (refreshing.current) return;
+    refreshing.current = true;
+    try {
+      const [dashboard, resultsData] = await Promise.all([getDashboard(true), getResults(true)]);
+      const totalBuses = (resultsData as any[]).reduce((sum, r) => sum + (r.buses_added || 0), 0) + (resultsData?.length || 0);
+      setRealBuses(totalBuses);
+      setDashboardData(dashboard);
+      setResults(resultsData);
+      const usingSaved = getDataSource("/dashboard") === "saved" || getDataSource("/results") === "saved";
+      setSavedData(usingSaved);
+      if (!usingSaved) setLastUpdated(new Date().toLocaleTimeString());
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    } finally {
+      refreshing.current = false;
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -71,6 +86,17 @@ export default function DashboardPage() {
     );
   }
 
+  if (!dashboardData) return (
+    <div className="flex min-h-screen bg-slate-50">
+      <Sidebar />
+      <main className="flex-1 p-8" role="alert">
+        <h1 className="text-2xl font-bold text-slate-900">Transit Control Dashboard</h1>
+        <p className="mt-4 text-slate-700">Network results could not be loaded. Retrying automatically.</p>
+        <button onClick={fetchData} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-white">Try again</button>
+      </main>
+    </div>
+  );
+
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar />
@@ -84,17 +110,17 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <div className="px-4 py-2 bg-green-100 border-2 border-green-500 text-green-800 text-sm font-bold rounded-lg">
-              ✓ System Active — All Data Current
+            <div role="status" className={`px-4 py-2 border-2 text-sm font-bold rounded-lg ${savedData || loadError ? "bg-amber-50 border-amber-400 text-amber-900" : "bg-green-100 border-green-500 text-green-800"}`}>
+              {savedData || loadError ? "Saved results — reconnecting automatically" : "✓ System Active — Results Loaded"}
             </div>
             <div className="text-sm font-semibold text-slate-600">
-              Last updated: {lastUpdated}
+              {savedData || loadError ? "Showing saved network data" : `Last refreshed: ${lastUpdated}`}
             </div>
           </div>
         </div>
         <p className="text-base font-semibold text-slate-600 mb-6">
           Smart system tracking{" "}
-          <span className="text-blue-700 font-bold">{dashboardData?.stats?.total_routes || 269} bus routes</span>
+          <span className="text-blue-700 font-bold">{dashboardData?.stats?.total_routes} bus routes</span>
           {" "}and{" "}
           <span className="text-green-700 font-bold">{realBuses} buses</span>
           {" "}across the city
@@ -118,7 +144,7 @@ export default function DashboardPage() {
               Route Optimisation Complete
             </p>
             <p className="text-xs font-medium text-indigo-600">
-              All {dashboardData?.stats?.total_routes || 269} routes have been analysed and optimised —
+              All {dashboardData?.stats?.total_routes} routes have been analysed and optimised —
               extra buses allocated, schedules adjusted, and crowded routes balanced
             </p>
           </div>

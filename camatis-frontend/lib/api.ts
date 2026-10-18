@@ -1,13 +1,103 @@
 const BASE = "/api";
 
+// Only successful GET responses are cached. Never cache login, settings writes,
+// predictions, or optimization requests as if they had succeeded.
+type SavedResponse = { data: unknown; savedAt: string };
+const responseCache = new Map<string, SavedResponse>();
+const dataSources = new Map<string, "backend" | "saved">();
+const CACHE_PREFIX = "camatis:read-v1:";
+
+export const getDataSource = (path: string) => dataSources.get(path);
+
+function remember(path: string, value: SavedResponse) {
+  responseCache.set(path, value);
+  if (typeof window === "undefined") return;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized.length < 500_000) window.localStorage.setItem(CACHE_PREFIX + path, serialized);
+  } catch { /* Storage can be unavailable or full; the in-memory cache still works. */ }
+}
+
+function cachedResponse(path: string): SavedResponse | undefined {
+  const cached = responseCache.get(path);
+  if (cached) return cached;
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(CACHE_PREFIX + path);
+    if (raw) {
+      const value = JSON.parse(raw) as SavedResponse;
+      if (validData(path, value.data)) {
+        responseCache.set(path, value);
+        return value;
+      }
+    }
+  } catch { /* Fall back to the snapshot shipped with this deployment. */ }
+}
+
+function validData(path: string, value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (path === "/dashboard") {
+    const stats = (value as DashboardData).stats;
+    return !!stats && Number.isFinite(stats.total_routes) && stats.total_routes > 0;
+  }
+  if (path.startsWith("/route/")) {
+    const detail = value as RouteDetail;
+    return Array.isArray(detail.demand_trend) && detail.demand_trend.length > 0;
+  }
+  if (path === "/results" || path === "/routes") return Array.isArray(value) && value.length > 0;
+  return true;
+}
+
+// An HTML cold-start page is not API data, even when Render returns HTTP 200.
+async function fetchJson(path: string, timeoutMs: number): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(path, { cache: "no-store", signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = path.endsWith(".gz") && res.body
+      ? new Response(res.body.pipeThrough(new DecompressionStream("gzip")))
+      : res;
+    return await body.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+let snapshotPromise: Promise<Record<string, unknown>> | undefined;
+async function savedSnapshot(): Promise<Record<string, unknown>> {
+  if (!snapshotPromise) {
+    snapshotPromise = fetchJson("/saved-data.json.gz", 10000)
+      .then(data => data as Record<string, unknown>)
+      .catch(error => { snapshotPromise = undefined; throw error; });
+  }
+  return snapshotPromise;
+}
+
 async function get<T>(path: string, fallback: T, throwOnError = false): Promise<T> {
   try {
-    const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
-  } catch (err) {
-    console.error(`API Error for ${path}:`, err);
-    if (throwOnError) throw err;
+    const data = await fetchJson(`${BASE}${path}`, 12000);
+    if (!validData(path, data)) throw new Error("API returned no saved network results");
+    remember(path, { data, savedAt: new Date().toISOString() });
+    dataSources.set(path, "backend");
+    return data as T;
+  } catch (error) {
+    const cached = cachedResponse(path);
+    if (cached) {
+      dataSources.set(path, "saved");
+      return cached.data as T;
+    }
+    try {
+      const snapshot = path === "/agents/conflicts"
+        ? { [path]: await fetchJson("/saved-conflicts.json.gz", 15000) }
+        : await savedSnapshot();
+      if (validData(path, snapshot[path])) {
+        dataSources.set(path, "saved");
+        return snapshot[path] as T;
+      }
+    } catch { /* The caller can surface an error if neither source is available. */ }
+    console.error(`API Error for ${path}:`, error);
+    if (throwOnError) throw error;
     return fallback;
   }
 }
@@ -60,12 +150,12 @@ export interface DashboardData {
   alerts: Alert[];
 }
 
-export const getDashboard = () => get<DashboardData>("/dashboard", {
+export const getDashboard = (throwOnError = false) => get<DashboardData>("/dashboard", {
   stats: { total_routes: 0, active_buses: 0, high_demand_routes: 0, anomalies: 0, avg_load_factor: 0, avg_demand: 0 },
   demand: [],
   load: [],
   alerts: []
-});
+}, throwOnError);
 
 // ============== Routes ==============
 export interface Route {

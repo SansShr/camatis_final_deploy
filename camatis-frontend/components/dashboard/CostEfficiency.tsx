@@ -16,10 +16,10 @@ export default function CostEfficiency({ results }: { results: any[] }) {
   const additionalCost    = totalBusesAdded * costPerBus;
 
   const avgLoad            = results.reduce((sum, r) => sum + (r.load_factor || 0), 0) / (totalRoutes || 1);
-  const waitTimeReduction  = Math.min(45, Math.round((totalBusesAdded / totalRoutes) * 30));
+  const waitTimeReduction  = Math.min(45, Math.round((totalBusesAdded / (totalRoutes || 1)) * 30));
   const fuelEfficiencyGain = Math.min(20, Math.round((1 - avgLoad) * 20));
   // Satisfaction is about PASSENGERS, not drivers
-  const passengerSatisfaction = Math.min(95, Math.round(85 + (totalBusesAdded / totalRoutes) * 5));
+  const passengerSatisfaction = Math.min(95, Math.round(85 + (totalBusesAdded / (totalRoutes || 1)) * 5));
 
   const metrics = [
     {
