@@ -56,24 +56,13 @@ class DecisionOptimizer:
         reduced_predictions["load_factor"] = np.array(reduced_predictions["load_factor"])
         reduced_predictions["demand_std"] = np.array(reduced_predictions["demand_std"])
 
-        # Set NSGA-III weights based on preference
-        if opt_pref == "cost":
-            preference_weights = np.array([0.5, 0.3, 0.1, 0.1])
-            print("[OPT] Cost minimization mode - prioritizing fuel efficiency")
-        elif opt_pref == "demand":
-            preference_weights = np.array([0.1, 0.1, 0.6, 0.2])
-            print("[OPT] Demand coverage mode - prioritizing passenger service")
-        elif opt_pref == "efficiency":
-            preference_weights = np.array([0.2, 0.2, 0.5, 0.1])
-            print("[OPT] Efficiency mode - prioritizing utilization")
-        else:  # balanced
-            preference_weights = np.array([0.25, 0.25, 0.25, 0.25])
-            print("[OPT] Balanced mode - equal weights")
-        
-        # Pass weights to optimizer
-        self.optimizer.preference_weights = preference_weights
+        # Use the six-objective profiles defined by the optimizer.
+        mode = opt_pref if opt_pref in self.optimizer.PREFERENCE_WEIGHTS else "balanced"
+        self.optimizer.preference_mode = mode
+        preference_weights = np.asarray(self.optimizer.PREFERENCE_WEIGHTS[mode], dtype=float)
+        print(f"[OPT] {mode} mode - six objective weights")
         results = self.optimizer.optimize(reduced_predictions)
-        best = self.optimizer.get_best_solution()
+        best = self.optimizer.get_best_solution(preference_weights)
         freq_solution = best['solution']
 
         optimized_actions = {}

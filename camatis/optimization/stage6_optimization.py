@@ -291,7 +291,7 @@ class MultiObjectiveOptimizer:
         )
         
         # Reference directions for NSGA-III
-        ref_dirs = get_reference_directions("das-dennis", 4, n_partitions=12)
+        ref_dirs = get_reference_directions("das-dennis", problem.n_obj, n_partitions=3)
         
         # Initialize algorithm
         self.algorithm = NSGA3(
@@ -319,7 +319,10 @@ class MultiObjectiveOptimizer:
         Default: equal weights
         """
         if preference_weights is None:
-            preference_weights = np.array([0.25, 0.25, 0.25, 0.25])
+            preference_weights = np.asarray(self.PREFERENCE_WEIGHTS[self.preference_mode], dtype=float)
+        preference_weights = np.asarray(preference_weights, dtype=float)
+        if preference_weights.shape != (self.results.F.shape[1],):
+            raise ValueError("Preference weights must match the objective count")
         
         # Normalize objectives
         F_norm = (self.results.F - self.results.F.min(axis=0)) / (
