@@ -3,32 +3,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Brain, Users, Bus, Calendar, TrendingUp, Shield, Wrench, Cloud, TrafficCone, Route, Activity } from "lucide-react";
 import { useEffect, useState } from "react";
-import { getAgentSystemStatus } from "@/lib/api";
-
-interface AgentStatus {
-  status: string;
-  trust_weight: number;
-}
-
-interface AgentSystemStatusData {
-  operational_agents: Record<string, AgentStatus>;
-  tactical_agents: Record<string, AgentStatus>;
-  supervisor_status: {
-    status: string;
-    conflicts_resolved: number;
-    last_updated: string;
-  };
-  total_conflicts_resolved: number;
-  resolution_strategy_counts: {
-    safety_override: number;
-    weighted_voting: number;
-    combined_actions: number;
-  };
-  average_trust_weights: Record<string, number>;
-}
+import { getAgentSystemStatus, type AgentSystemStatus } from "@/lib/api";
 
 export default function AgentDecisions() {
-  const [systemStatus, setSystemStatus] = useState<AgentSystemStatusData | null>(null);
+  const [systemStatus, setSystemStatus] = useState<AgentSystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

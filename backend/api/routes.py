@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import FileResponse
 from datetime import datetime
 import secrets
 
@@ -42,7 +43,7 @@ async def login(request: LoginRequest):
 # ============== Dashboard Routes ==============
 
 @router.get("/dashboard", response_model=DashboardData)
-async def get_dashboard():
+def get_dashboard():
     """Get dashboard data"""
     return data_service.get_dashboard_data()
 
@@ -54,7 +55,7 @@ async def get_routes():
     return data_service.get_all_routes()
 
 @router.get("/route/{route_id}", response_model=RouteDetail)
-async def get_route_detail(route_id: str):
+def get_route_detail(route_id: str):
     """Get detailed route information"""
     detail = data_service.get_route_detail(route_id)
     
@@ -77,7 +78,7 @@ async def get_route_detail(route_id: str):
 # ============== Optimization Routes ==============
 
 @router.post("/optimize", response_model=OptimizeResponse)
-async def run_optimization():
+def run_optimization():
     """
     Run your existing CAMATIS pipeline inference
     """
@@ -205,7 +206,7 @@ async def get_agent_system_status():
     return agent_data
 
 @router.get("/agents/route/{route_id}", response_model=AgentDecisionDetail)
-async def get_agent_decision_detail(route_id: int):
+def get_agent_decision_detail(route_id: int):
     """Get detailed agent decision information for a specific route"""
     detail = data_service.get_route_agent_detail(route_id)
     
@@ -231,8 +232,13 @@ async def get_agent_decision_detail(route_id: int):
 @router.get("/agents/conflicts", response_model=List[ConflictResolution])
 async def get_all_conflicts():
     """Get all conflict resolution details from the last optimization run"""
-    conflicts = data_service.get_all_conflicts()
-    return conflicts
+    # Stream the existing export without materializing every record in RAM.
+    import os
+    from backend.config import OUTPUT_FILE
+    path = os.path.join(os.path.dirname(OUTPUT_FILE), "conflict_resolutions.json")
+    if not os.path.exists(path):
+        return []
+    return FileResponse(path, media_type="application/json")
 
 @router.get("/agents/blackboard", response_model=BlackboardSnapshot)
 async def get_blackboard_state():
@@ -250,7 +256,7 @@ async def get_blackboard_state():
     return blackboard_data
 
 @router.get("/agents/scores/{route_id}", response_model=List[AgentScore])
-async def get_agent_scores(route_id: int):
+def get_agent_scores(route_id: int):
     """Get all agent scores for a specific route"""
     scores = data_service.get_agent_scores_for_route(route_id)
     
@@ -262,14 +268,13 @@ async def get_agent_scores(route_id: int):
 # ============== Real-time Prediction Route ==============
 
 @router.post("/predict", response_model=PredictResponse)
-async def predict_route(request: PredictRequest):
+def predict_route(request: PredictRequest):
     """
     Run a real-time single-route prediction from user-entered form data.
     Loads the trained ML models and returns decisions for the given inputs.
     """
     try:
-        from backend.services.predict_service import predict_route as _predict
-        result = _predict(request.dict())
+        result = pipeline_service.run_prediction(request.model_dump())
         return PredictResponse(**result)
     except Exception as e:
         import traceback

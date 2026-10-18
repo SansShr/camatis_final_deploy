@@ -1,4 +1,4 @@
-const BASE = "http://localhost:8000/api";
+const BASE = "/api";
 
 async function get<T>(path: string, fallback: T): Promise<T> {
   try {
@@ -205,7 +205,7 @@ export interface AgentDecisionDetail {
 export interface AgentSystemStatus {
   operational_agents: Record<string, { status: string; trust_weight: number }>;
   tactical_agents: Record<string, { status: string; trust_weight: number }>;
-  supervisor_status: Record<string, any>;
+  supervisor_status: { status?: string; conflicts_resolved?: number; last_updated?: string };
   total_conflicts_resolved: number;
   resolution_strategy_counts: {
     safety_override: number;

@@ -1,4 +1,5 @@
 import json
+import ijson
 import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -255,13 +256,12 @@ class DataService:
         try:
             agent_file = os.path.join(os.path.dirname(OUTPUT_FILE), 'agent_route_details.json')
             if os.path.exists(agent_file):
-                with open(agent_file) as f:
-                    agent_data = json.load(f)
-                all_loads = [
-                    {"route": f"R-{r['route_id']}", "load": round(r['final_decision'].get('load', 0.5), 3)}
-                    for r in agent_data
-                    if r.get('route_id', -1) > 0 and r.get('final_decision', {}).get('load') is not None
-                ]
+                with open(agent_file, 'rb') as f:
+                    all_loads = [
+                        {"route": f"R-{r['route_id']}", "load": round(r['final_decision'].get('load', 0.5), 3)}
+                        for r in ijson.items(f, 'item', use_float=True)
+                        if r.get('route_id', -1) > 0 and r.get('final_decision', {}).get('load') is not None
+                    ]
                 # Sample across the full range for a representative spread
                 all_loads.sort(key=lambda x: x['load'])
                 n = len(all_loads)
@@ -382,13 +382,10 @@ class DataService:
         if not os.path.exists(agent_details_file):
             return None
         
-        with open(agent_details_file, 'r') as f:
-            all_details = json.load(f)
-        
-        # Find the specific route
-        for detail in all_details:
-            if detail.get('route_id') == route_id:
-                return detail
+        with open(agent_details_file, 'rb') as f:
+            for detail in ijson.items(f, 'item', use_float=True):
+                if detail.get('route_id') == route_id:
+                    return detail
         
         return None
     

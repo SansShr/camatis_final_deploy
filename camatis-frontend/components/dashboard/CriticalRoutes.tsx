@@ -31,7 +31,7 @@ function urgencyMeta(waiting: number, anomaly: boolean) {
   return               { label: "Watch Closely",       color: "text-yellow-700", bg: "bg-yellow-50", border: "border-yellow-200", dot: "bg-yellow-500", bar: "bg-yellow-400" };
 }
 
-export default function CriticalRoutes({ results }: { results: any[] }) {
+export default function CriticalRoutes({ results }: { results: CriticalRoute[] }) {
   const criticalRoutes = results
     .filter(r => r.waiting_passengers > 8 || r.anomaly || r.buses_added > 2)
     .sort((a, b) => b.waiting_passengers - a.waiting_passengers)

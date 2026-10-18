@@ -335,6 +335,9 @@ class AgentManager:
         
         # Export agent data for backend API
         self._export_agent_data()
+        # API readers use the exported files; release journey-level details.
+        self.agent_route_details.clear()
+        self.conflict_resolutions.clear()
 
         return decisions
     
@@ -343,16 +346,20 @@ class AgentManager:
         output_dir = os.path.dirname(os.path.abspath(__file__))
         output_dir = os.path.join(output_dir, '..', '..')  # Go to project root
         
+        def write_export(path, data):
+            temporary = path + '.tmp'
+            with open(temporary, 'w') as f:
+                json.dump(data, f, indent=2)
+            os.replace(temporary, path)
+
         # Export agent route details
         route_details_file = os.path.join(output_dir, 'agent_route_details.json')
-        with open(route_details_file, 'w') as f:
-            json.dump(self.agent_route_details, f, indent=2)
+        write_export(route_details_file, self.agent_route_details)
         print(f"[EXPORT] Agent route details saved to {route_details_file}")
         
         # Export conflict resolutions
         conflicts_file = os.path.join(output_dir, 'conflict_resolutions.json')
-        with open(conflicts_file, 'w') as f:
-            json.dump(self.conflict_resolutions, f, indent=2)
+        write_export(conflicts_file, self.conflict_resolutions)
         print(f"[EXPORT] Conflict resolutions saved to {conflicts_file}")
         
         # Calculate average trust weights
@@ -393,8 +400,7 @@ class AgentManager:
         
         # Export system status
         system_status_file = os.path.join(output_dir, 'agent_system_status.json')
-        with open(system_status_file, 'w') as f:
-            json.dump(self.system_status, f, indent=2)
+        write_export(system_status_file, self.system_status)
         print(f"[EXPORT] Agent system status saved to {system_status_file}")
         
         # Export blackboard snapshot
@@ -412,8 +418,7 @@ class AgentManager:
                 blackboard_snapshot['namespaces'][namespace] = blackboard_state['observations'][namespace]
             
             blackboard_file = os.path.join(output_dir, 'blackboard_snapshot.json')
-            with open(blackboard_file, 'w') as f:
-                json.dump(blackboard_snapshot, f, indent=2)
+            write_export(blackboard_file, blackboard_snapshot)
             print(f"[EXPORT] Blackboard snapshot saved to {blackboard_file}")
         except Exception as e:
             print(f"[WARNING] Could not export blackboard state: {e}")

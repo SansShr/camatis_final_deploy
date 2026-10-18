@@ -133,10 +133,8 @@ class DeepLearningTrainer:
             dropout=DEEP_LEARNING_CONFIG['dropout']
         ).to(self.device)
         
-        self.optimizer = torch.optim.Adam(
-            self.model.parameters(),
-            lr=DEEP_LEARNING_CONFIG['learning_rate']
-        )
+        # Inference does not need the optimizer or its training-only imports.
+        self.optimizer = None
         
         self.criterion_regression = nn.MSELoss()
         self.criterion_classification = nn.CrossEntropyLoss()
@@ -144,6 +142,11 @@ class DeepLearningTrainer:
     def train(self, X_train, y_train, X_val=None, y_val=None):
         """Train the deep learning model"""
         print(f"Training on device: {self.device}")
+        if self.optimizer is None:
+            self.optimizer = torch.optim.Adam(
+                self.model.parameters(),
+                lr=DEEP_LEARNING_CONFIG["learning_rate"]
+            )
         
         # Prepare data
         X_tensor = torch.FloatTensor(X_train).to(self.device)
@@ -216,48 +219,50 @@ class DeepLearningTrainer:
         self.model.eval()
         print(f"Model loaded from {path}")
 
-    def predict(self, X):
-        """Make predictions"""
+    def predict(self, X, batch_size=128):
+        """Make predictions with bounded activation memory."""
+        if batch_size < 1 or len(X) == 0:
+            raise ValueError("A positive batch size and nonempty input are required")
         self.model.eval()
-        X_tensor = torch.FloatTensor(X).to(self.device)
-        
+        demand, load, utilization = [], [], []
         with torch.no_grad():
-            pred_demand, pred_load, pred_util = self.model(X_tensor)
-            pred_util_class = torch.argmax(pred_util, dim=1)
-        
+            for start in range(0, len(X), batch_size):
+                batch = torch.tensor(X[start:start + batch_size], dtype=torch.float32, device=self.device)
+                pred_demand, pred_load, pred_util = self.model(batch)
+                demand.append(pred_demand.cpu().numpy())
+                load.append(pred_load.cpu().numpy())
+                utilization.append(torch.argmax(pred_util, dim=1).cpu().numpy())
         return {
-            'passenger_demand': pred_demand.cpu().numpy(),
-            'load_factor': pred_load.cpu().numpy(),
-            'utilization_encoded': pred_util_class.cpu().numpy()
+            'passenger_demand': np.concatenate(demand),
+            'load_factor': np.concatenate(load),
+            'utilization_encoded': np.concatenate(utilization)
         }
-    
-    def predict_with_uncertainty(self, X, n_samples=MC_DROPOUT_SAMPLES):
-        """Predict with uncertainty using MC Dropout"""
-        self.model.train()  # Enable dropout
-        X_tensor = torch.FloatTensor(X).to(self.device)
-        
-        demand_samples = []
-        load_samples = []
-        cls_samples = []
-        
-        for _ in range(n_samples):
-            with torch.no_grad():
-                pred_demand, pred_load, pred_util = self.model(X_tensor, mc_dropout=True)
 
-                demand_samples.append(pred_demand.cpu().numpy())
-                load_samples.append(pred_load.cpu().numpy())
-
-                probs = torch.softmax(pred_util, dim=1)
-                cls_samples.append(probs.cpu().numpy())
-        
-        demand_samples = np.array(demand_samples)
-        load_samples = np.array(load_samples)
-        cls_samples = np.array(cls_samples)
-        
+    def predict_with_uncertainty(self, X, n_samples=MC_DROPOUT_SAMPLES, batch_size=128):
+        """Run the same MC Dropout sampling in bounded batches."""
+        if batch_size < 1 or n_samples < 1 or len(X) == 0:
+            raise ValueError("Positive batch/sample counts and nonempty input are required")
+        self.model.train()
+        demand_samples, load_samples, cls_samples = [], [], []
+        with torch.no_grad():
+            for _ in range(n_samples):
+                demand, load, probabilities = [], [], []
+                for start in range(0, len(X), batch_size):
+                    batch = torch.tensor(X[start:start + batch_size], dtype=torch.float32, device=self.device)
+                    pred_demand, pred_load, pred_util = self.model(batch, mc_dropout=True)
+                    demand.append(pred_demand.cpu().numpy())
+                    load.append(pred_load.cpu().numpy())
+                    probabilities.append(torch.softmax(pred_util, dim=1).cpu().numpy())
+                demand_samples.append(np.concatenate(demand))
+                load_samples.append(np.concatenate(load))
+                cls_samples.append(np.concatenate(probabilities))
+        demand_samples = np.asarray(demand_samples)
+        load_samples = np.asarray(load_samples)
+        cls_samples = np.asarray(cls_samples)
         return {
-        'demand_mean': demand_samples.mean(axis=0),
-        'demand_std': demand_samples.std(axis=0),
-        'load_mean': load_samples.mean(axis=0),
-        'load_std': load_samples.std(axis=0),
-        'cls_probs': cls_samples.mean(axis=0)
-    }
+            'demand_mean': demand_samples.mean(axis=0),
+            'demand_std': demand_samples.std(axis=0),
+            'load_mean': load_samples.mean(axis=0),
+            'load_std': load_samples.std(axis=0),
+            'cls_probs': cls_samples.mean(axis=0)
+        }

@@ -5,6 +5,11 @@ Thin wrapper that reads your existing final_output.json
 
 import sys
 import os
+
+# Limit numerical-library thread pools on small hosting instances.
+for thread_key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+    os.environ.setdefault(thread_key, "1")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
