@@ -1,6 +1,7 @@
 import numpy as np
 import json
 import os
+from enum import Enum
 from datetime import datetime
 from camatis.agents.demand_agent import DemandAgent
 from camatis.agents.fleet_agent import FleetAgent
@@ -349,7 +350,7 @@ class AgentManager:
         def write_export(path, data):
             temporary = path + '.tmp'
             with open(temporary, 'w') as f:
-                json.dump(data, f, indent=2)
+                json.dump(data, f, indent=2, default=self._json_scalar)
             os.replace(temporary, path)
 
         # Export agent route details
@@ -405,20 +406,29 @@ class AgentManager:
         
         # Export blackboard snapshot
         try:
-            blackboard_state = blackboard.export_state()
+            blackboard_state = self.blackboard.get_full_state()['data']
             blackboard_snapshot = {
                 'namespaces': {},
                 'system_state': blackboard_state.get('system_state', {}),
-                'urgent_messages': blackboard_state.get('message_broker', {}).get('urgent', []),
+                'urgent_messages': blackboard_state.get('urgent_messages', []),
                 'last_update_time': datetime.now().isoformat()
             }
             
             # Organize by namespace
-            for namespace in blackboard_state.get('observations', {}):
-                blackboard_snapshot['namespaces'][namespace] = blackboard_state['observations'][namespace]
+            for namespace, observations in blackboard_state.items():
+                if namespace not in ('system_state', 'urgent_messages') and isinstance(observations, dict):
+                    blackboard_snapshot['namespaces'][namespace] = list(observations.values())
             
             blackboard_file = os.path.join(output_dir, 'blackboard_snapshot.json')
             write_export(blackboard_file, blackboard_snapshot)
             print(f"[EXPORT] Blackboard snapshot saved to {blackboard_file}")
         except Exception as e:
             print(f"[WARNING] Could not export blackboard state: {e}")
+
+    @staticmethod
+    def _json_scalar(value):
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, np.generic):
+            return value.item()
+        raise TypeError(f"Cannot serialize {type(value).__name__}")
