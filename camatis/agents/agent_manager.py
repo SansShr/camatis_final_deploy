@@ -254,20 +254,12 @@ class AgentManager:
             actions.append(self.fleet_agent.allocate(route_data, self.blackboard._data))
             actions.append(self.schedule_agent.adjust(route_data, self.blackboard._data))
 
-            final_action = self.supervisor.resolve(actions)
+            final_action = self.supervisor.resolve(actions, route_id=int(route_ids[i]))
 
             if final_action:
-                # Extract action strings - handle various return types
-                if isinstance(final_action, list) and len(final_action) > 0:
-                    if isinstance(final_action[0], dict):
-                        action_list = [a.get("action", str(a)) for a in final_action]
-                    else:
-                        action_list = [str(a) for a in final_action]
-                elif isinstance(final_action, dict):
-                    action_list = [final_action.get("action", str(final_action))]
-                else:
-                    action_list = [str(final_action)]
-                
+                # Preserve accepted action labels for downstream routing decisions.
+                action_list = self._action_labels(final_action) or ["No action"]
+
                 # Check if this was a conflict resolution
                 if len(set([str(a) for a in actions])) > 1:  # Different recommendations
                     conflict_resolution = {
@@ -432,3 +424,20 @@ class AgentManager:
         if isinstance(value, np.generic):
             return value.item()
         raise TypeError(f"Cannot serialize {type(value).__name__}")
+
+
+    @staticmethod
+    def _action_labels(decision):
+        if isinstance(decision, str):
+            return [decision] if decision else []
+        if isinstance(decision, list):
+            labels = []
+            for item in decision:
+                labels.extend(AgentManager._action_labels(item))
+            return list(dict.fromkeys(labels))
+        if isinstance(decision, dict):
+            primary = decision.get("primary_action", decision.get("action"))
+            labels = AgentManager._action_labels(primary)
+            labels.extend(AgentManager._action_labels(decision.get("supporting_actions", [])))
+            return list(dict.fromkeys(labels))
+        return []

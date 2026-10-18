@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getRoutes } from "@/lib/api";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/Table";
@@ -36,17 +37,21 @@ export default function RouteTable() {
   const router = useRouter();
   const [routes,  setRoutes]  = useState<Route[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadCount, setReloadCount] = useState(0);
   const [search,  setSearch]  = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [sortKey, setSortKey] = useState<SortKey>("id");
   const [sortAsc, setSortAsc] = useState(true);
 
   useEffect(() => {
-    getRoutes().then((data) => {
-      setRoutes(data as Route[]);
-      setLoading(false);
-    });
-  }, []);
+    let active = true;
+    getRoutes(true)
+      .then(data => { if (active) setRoutes(data as Route[]); })
+      .catch(() => { if (active) setLoadError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [reloadCount]);
 
   const filtered = useMemo(() => {
     let out = routes;
@@ -99,6 +104,15 @@ export default function RouteTable() {
   if (loading) return (
     <div className="flex items-center justify-center h-40">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+    </div>
+  );
+
+  if (loadError) return (
+    <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
+      <p>Route data could not be loaded. Please try again.</p>
+      <button className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white" onClick={() => {
+        setLoadError(false); setLoading(true); setReloadCount(value => value + 1);
+      }}>Try again</button>
     </div>
   );
 
@@ -193,7 +207,9 @@ export default function RouteTable() {
                     className="cursor-pointer hover:bg-blue-50 transition-colors"
                     onClick={() => router.push(`/routes/${encodeURIComponent(route.id)}`)}
                   >
-                    <TableCell className="font-bold text-blue-600">{route.id}</TableCell>
+                    <TableCell className="font-bold text-blue-600">
+                      <Link href={`/routes/${encodeURIComponent(route.id)}`} prefetch={false} onClick={event => event.stopPropagation()} className="hover:underline focus-visible:underline">{route.id}</Link>
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5">
                         <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
@@ -240,7 +256,7 @@ export default function RouteTable() {
                     </TableCell>
                     <TableCell>
                       {route.rerouted_to
-                        ? <span className="text-orange-600 font-semibold text-sm" title="Some buses sent to this route to balance passengers">→ R-{route.rerouted_to}</span>
+                        ? <Link href={`/routes/R-${route.rerouted_to}`} prefetch={false} onClick={event => event.stopPropagation()} className="text-orange-600 font-semibold text-sm hover:underline" title="Quieter route that can lend a bus">→ R-{route.rerouted_to}</Link>
                         : <span className="text-slate-400 text-sm">—</span>}
                     </TableCell>
                   </TableRow>

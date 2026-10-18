@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
 import { getResults } from "@/lib/api";
@@ -28,15 +29,18 @@ interface Reroute {
 export default function ReroutingPage() {
   const [reroutes, setReroutes] = useState<Reroute[]>([]);
   const [loading,  setLoading]  = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
-    getResults().then((data) => {
+    let active = true;
+    getResults(true).then((data) => {
       const results = data as OptimizationResult[];
       const seen = new Set<string>();
       const list: Reroute[] = [];
 
       results.forEach(r => {
-        if (r.rerouted_to) {
+        if (r.route_id > 0 && r.rerouted_to !== null && r.rerouted_to > 0) {
           const key = `${r.route_id}->${r.rerouted_to}`;
           if (!seen.has(key)) {
             seen.add(key);
@@ -50,10 +54,11 @@ export default function ReroutingPage() {
         }
       });
 
-      setReroutes(list);
-      setLoading(false);
-    });
-  }, []);
+      if (active) setReroutes(list);
+    }).catch(() => { if (active) setLoadError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [reloadCount]);
 
   const totalReroutes    = reroutes.length;
   const receivingRoutes  = new Set(reroutes.map(r => r.to_route)).size;
@@ -90,12 +95,13 @@ export default function ReroutingPage() {
           <div className="flex items-center justify-center h-40">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
           </div>
-        ) : reroutes.length === 0 ? (
+        ) : loadError ? (
           <Card>
-            <CardContent className="text-center py-12">
-              <CheckCircle size={48} className="text-green-400 mx-auto mb-3" />
-              <p className="text-sm font-semibold text-green-700">No rerouting needed right now</p>
-              <p className="text-xs text-slate-500 mt-1">All routes are within comfortable passenger limits</p>
+            <CardContent className="py-8 text-sm text-red-800" role="alert">
+              <p>Rerouting data could not be loaded. Please try again.</p>
+              <button className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white" onClick={() => {
+                setLoadError(false); setLoading(true); setReloadCount(value => value + 1);
+              }}>Try again</button>
             </CardContent>
           </Card>
         ) : (
@@ -148,6 +154,13 @@ export default function ReroutingPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
+                  {reroutes.length === 0 && (
+                    <div className="py-8 text-center">
+                      <CheckCircle size={40} className="mx-auto mb-3 text-green-500" />
+                      <p className="text-sm font-semibold text-slate-700">No bus transfers recommended in the latest results</p>
+                      <p className="mt-1 text-xs text-slate-500">Route warnings and other recommendations are available on the Routes page.</p>
+                    </div>
+                  )}
                   {reroutes.map((r, i) => {
                     const urgency = r.demand > 400 ? "Very crowded" : r.demand > 250 ? "Crowded" : "Moderately crowded";
                     const urgencyColor = r.demand > 400 ? "text-red-600 bg-red-50 border-red-200" : r.demand > 250 ? "text-orange-600 bg-orange-50 border-orange-200" : "text-yellow-600 bg-yellow-50 border-yellow-200";
@@ -160,7 +173,7 @@ export default function ReroutingPage() {
                           {/* Quiet route (source of spare bus) */}
                           <div className="flex flex-col items-center">
                             <div className="w-12 h-12 rounded-full bg-green-100 border-2 border-green-300 flex items-center justify-center">
-                              <span className="text-sm font-bold text-green-700">R-{r.to_route}</span>
+                              <Link href={`/routes/R-${r.to_route}`} prefetch={false} className="text-sm font-bold text-green-700 hover:underline" aria-label={`View quiet route R-${r.to_route}`}>R-{r.to_route}</Link>
                             </div>
                             <span className="text-xs text-green-600 mt-1 font-medium text-center">Quiet route<br/>lends a bus</span>
                           </div>
@@ -180,7 +193,7 @@ export default function ReroutingPage() {
                           {/* Overcrowded route (receives the spare bus) */}
                           <div className="flex flex-col items-center">
                             <div className="w-12 h-12 rounded-full bg-red-100 border-2 border-red-300 flex items-center justify-center">
-                              <span className="text-sm font-bold text-red-700">R-{r.from_route}</span>
+                              <Link href={`/routes/R-${r.from_route}`} prefetch={false} className="text-sm font-bold text-red-700 hover:underline" aria-label={`View overcrowded route R-${r.from_route}`}>R-{r.from_route}</Link>
                             </div>
                             <span className="text-xs text-red-600 mt-1 font-medium text-center">Overcrowded<br/>gets the bus</span>
                           </div>

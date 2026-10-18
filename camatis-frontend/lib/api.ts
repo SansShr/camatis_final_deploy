@@ -1,12 +1,13 @@
 const BASE = "/api";
 
-async function get<T>(path: string, fallback: T): Promise<T> {
+async function get<T>(path: string, fallback: T, throwOnError = false): Promise<T> {
   try {
     const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   } catch (err) {
     console.error(`API Error for ${path}:`, err);
+    if (throwOnError) throw err;
     return fallback;
   }
 }
@@ -74,7 +75,7 @@ export interface Route {
   status: string;
 }
 
-export const getRoutes = () => get<Route[]>("/routes", []);
+export const getRoutes = (throwOnError = false) => get<Route[]>("/routes", [], throwOnError);
 
 // ============== Route Detail ==============
 export interface RouteDetail {
@@ -126,7 +127,7 @@ export interface OptimizationResult {
   high_uncertainty: boolean;
 }
 
-export const getResults = () => get<OptimizationResult[]>("/results", []);
+export const getResults = (throwOnError = false) => get<OptimizationResult[]>("/results", [], throwOnError);
 
 // ============== Alerts ==============
 export interface Alert {
