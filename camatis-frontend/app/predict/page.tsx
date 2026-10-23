@@ -287,6 +287,11 @@ export default function PredictPage() {
   const [serviceState, setServiceState] = useState("Preparing prediction service… You can fill in the form while it starts.");
   const [progress, setProgress] = useState("");
   const submitting = useRef(false);
+  const resultPanel = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (result) resultPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [result]);
 
   useEffect(() => {
     let active = true;
@@ -531,7 +536,7 @@ export default function PredictPage() {
           </form>
 
           {/* ── Results panel ── */}
-          <div>
+          <div ref={resultPanel} aria-live="polite">
             {result ? (
               <ResultCard result={result} />
             ) : (
