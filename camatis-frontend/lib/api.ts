@@ -409,8 +409,16 @@ export function preparePrediction(): Promise<void> {
   if (!preparation) {
     preparation = (async () => {
       const deadline = Date.now() + 240000;
+      let awake = false;
       while (Date.now() < deadline) {
         try {
+          // Wake the process with a lightweight request before asking it to
+          // load models. A sleeping Render instance may return a proxy page.
+          if (!awake) {
+            const health = await predictionProbe("/health", Math.min(12000, deadline - Date.now()));
+            if (health.status !== "healthy") throw new Error("Prediction service is starting.");
+            awake = true;
+          }
           const res = await requestReadiness(Math.min(60000, deadline - Date.now()));
           if (res.ready === true) { modelsReadyAt = Date.now(); return; }
         } catch (error) {
@@ -425,12 +433,25 @@ export function preparePrediction(): Promise<void> {
 }
 
 async function requestReadiness(timeoutMs: number): Promise<{ ready: boolean }> {
+  return predictionProbe("/predict/ready", timeoutMs);
+}
+
+async function predictionProbe(path: "/health" | "/predict/ready", timeoutMs: number): Promise<any> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${BASE}/predict/ready`, { cache: "no-store", signal: controller.signal });
-    if (!res.ok) throw new ApiError("Prediction models could not be prepared. Please try again.", res.status);
-    return await res.json();
+    const res = await fetch(`${BASE}${path}`, { cache: "no-store", signal: controller.signal });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      // Only the backend's explicit model error proves loading failed. Proxy
+      // 500s (as well as 502/503/504) are temporary startup failures to retry.
+      if (res.status === 500 && body?.detail === "Prediction models could not be loaded. Please retry.")
+        throw new ApiError("The prediction models could not be loaded. Please try again.", res.status);
+      if (res.status >= 500) throw new Error("Prediction service is reconnecting.");
+      throw new ApiError(`The prediction service is unavailable (HTTP ${res.status}). Please try again.`, res.status);
+    }
+    if (!body || typeof body !== "object") throw new Error("Prediction service is starting.");
+    return body;
   } finally { clearTimeout(timer); }
 }
 

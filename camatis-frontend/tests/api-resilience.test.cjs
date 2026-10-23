@@ -72,8 +72,9 @@ test("agent and conflict views retain the original saved records", async () => {
 test("failed mutations still fail instead of returning a saved success", async () => {
   const api = client(() => new Response("Unavailable", { status: 503 }));
   await assert.rejects(api.postOptimize(), /503/);
-  const prediction = client(() => new Response("Model loading failed", { status: 500 }));
-  await assert.rejects(prediction.postPredict({ route_id: 7 }), /prepared/);
+  const prediction = client(url => url.endsWith("/health") ? Response.json({status:"healthy"})
+    : Response.json({detail:"Prediction models could not be loaded. Please retry."}, { status: 500 }));
+  await assert.rejects(prediction.postPredict({ route_id: 7 }), /models could not be loaded/);
 });
 
 test("empty fleet and cost panels never render NaN or Infinity", () => {
@@ -109,6 +110,7 @@ test("prediction preparation is shared, handles a cold-start page, and returns a
   let probes = 0, posts = 0;
   const input = { route_id:7,passenger_count:30 };
   const api = client(async url => {
+    if (url.endsWith("/health")) return Response.json({status:"healthy"});
     if (url.endsWith("/ready")) {
       probes++;
       return probes === 1 ? new Response("<html>Starting</html>") : Response.json({ready:true});
@@ -126,6 +128,7 @@ test("prediction preparation is shared, handles a cold-start page, and returns a
 test("transient prediction failures reconnect, but input errors are not replayed", async () => {
   let posts = 0;
   const api = client(url => {
+    if (url.endsWith("/health")) return Response.json({status:"healthy"});
     if (url.endsWith("/ready")) return Response.json({ready:true});
     posts++;
     return posts===1 ? new Response("Starting", {status:503}) : Response.json({route_id:7,predicted_demand:220});
@@ -133,7 +136,23 @@ test("transient prediction failures reconnect, but input errors are not replayed
   assert.equal((await api.postPredict({route_id:7})).predicted_demand,220);
   assert.equal(posts,2);
   let invalidPosts=0;
-  const invalid=client(url => url.endsWith("/ready") ? Response.json({ready:true}) : (invalidPosts++,new Response("Bad input",{status:422})));
+  const invalid=client(url => url.endsWith("/health") ? Response.json({status:"healthy"})
+    : url.endsWith("/ready") ? Response.json({ready:true}) : (invalidPosts++,new Response("Bad input",{status:422})));
   await assert.rejects(invalid.postPredict({route_id:7}),/allowed ranges/);
   assert.equal(invalidPosts,1);
+});
+
+test("a sleeping service wakes before preparation and proxy 500 pages never become model errors", async () => {
+  const calls=[];
+  let health=0, ready=0;
+  const api=client(url => {
+    calls.push(url);
+    if (url.endsWith("/health")) return ++health===1
+      ? new Response("<html>Waking up</html>",{status:500}) : Response.json({status:"healthy"});
+    if (url.endsWith("/ready")) return ++ready===1
+      ? new Response("Internal Server Error",{status:500}) : Response.json({ready:true});
+    return Response.json({route_id:7,predicted_demand:327});
+  },new Map(),{setTimeout:(fn,ms)=>setTimeout(fn,ms===2000?1:ms),clearTimeout});
+  assert.equal((await api.postPredict({route_id:7})).predicted_demand,327);
+  assert.deepEqual(calls,["/api/health","/api/health","/api/predict/ready","/api/predict/ready","/api/predict"]);
 });
