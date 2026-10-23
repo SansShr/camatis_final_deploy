@@ -72,7 +72,8 @@ test("agent and conflict views retain the original saved records", async () => {
 test("failed mutations still fail instead of returning a saved success", async () => {
   const api = client(() => new Response("Unavailable", { status: 503 }));
   await assert.rejects(api.postOptimize(), /503/);
-  await assert.rejects(api.postPredict({ route_id: 7 }), /503/);
+  const prediction = client(() => new Response("Model loading failed", { status: 500 }));
+  await assert.rejects(prediction.postPredict({ route_id: 7 }), /prepared/);
 });
 
 test("empty fleet and cost panels never render NaN or Infinity", () => {
@@ -88,4 +89,51 @@ test("empty fleet and cost panels never render NaN or Infinity", () => {
     const html = renderToStaticMarkup(React.createElement(context.exports.default, { results: [] }));
     assert.doesNotMatch(html, /NaN|Infinity/);
   }
+});
+
+
+test("recorded route assessments survive a cold start and an empty API response", async () => {
+  for (const response of [() => new Response("Starting", {status: 503}), () => Response.json({ route_id:60,agent_scores:[],final_decision:{} })]) {
+    const api = client(response);
+    const detail = await api.getRouteAgentDetail(60, true);
+    assert.equal(detail.agent_scores.length, 7);
+    assert.equal(detail.route_id, 60);
+    assert.equal(api.getDataSource("/agents/route/60"), "saved");
+    const summary = await api.getRouteAgentDetail(68, true);
+    assert.equal(summary.final_decision.assessment_status, "summary_only");
+    assert.equal(summary.agent_scores.length, 0);
+  }
+});
+
+test("prediction preparation is shared, handles a cold-start page, and returns a computed response", async () => {
+  let probes = 0, posts = 0;
+  const input = { route_id:7,passenger_count:30 };
+  const api = client(async url => {
+    if (url.endsWith("/ready")) {
+      probes++;
+      return probes === 1 ? new Response("<html>Starting</html>") : Response.json({ready:true});
+    }
+    posts++;
+    return Response.json({route_id:7,predicted_demand:330});
+  }, new Map(), { setTimeout: (fn, ms) => setTimeout(fn, ms === 2000 ? 1 : ms), clearTimeout });
+  await Promise.all([api.preparePrediction(), api.preparePrediction()]);
+  assert.equal(probes, 2);
+  const result = await api.postPredict(input);
+  assert.equal(result.predicted_demand,330);
+  assert.equal(posts,1);
+});
+
+test("transient prediction failures reconnect, but input errors are not replayed", async () => {
+  let posts = 0;
+  const api = client(url => {
+    if (url.endsWith("/ready")) return Response.json({ready:true});
+    posts++;
+    return posts===1 ? new Response("Starting", {status:503}) : Response.json({route_id:7,predicted_demand:220});
+  }, new Map(), { setTimeout: (fn, ms) => setTimeout(fn, ms === 2000 ? 1 : ms), clearTimeout });
+  assert.equal((await api.postPredict({route_id:7})).predicted_demand,220);
+  assert.equal(posts,2);
+  let invalidPosts=0;
+  const invalid=client(url => url.endsWith("/ready") ? Response.json({ready:true}) : (invalidPosts++,new Response("Bad input",{status:422})));
+  await assert.rejects(invalid.postPredict({route_id:7}),/allowed ranges/);
+  assert.equal(invalidPosts,1);
 });

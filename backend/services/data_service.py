@@ -1,4 +1,7 @@
 import json
+import gzip
+import hashlib
+import threading
 import ijson
 import os
 from typing import List, Dict, Any, Optional
@@ -13,6 +16,9 @@ class DataService:
     def __init__(self):
         self._cached_results = None
         self._cached_timestamp = None
+        self._agent_index = {}
+        self._agent_index_version = None
+        self._agent_index_lock = threading.Lock()
     
     def load_results(self) -> Optional[List[Dict[str, Any]]]:
         """Load results from final_output.json"""
@@ -382,13 +388,27 @@ class DataService:
         if not os.path.exists(agent_details_file):
             return None
         
-        with open(agent_details_file, 'rb') as f:
-            for detail in ijson.items(f, 'item', use_float=True):
-                if detail.get('route_id') == route_id:
-                    return detail
+        version = (os.stat(agent_details_file).st_mtime_ns, os.path.getsize(agent_details_file))
+        with self._agent_index_lock:
+            if version != self._agent_index_version:
+                index = {}
+                saved = os.path.join(os.path.dirname(os.path.dirname(__file__)), "saved_route_checks.json.gz")
+                if os.path.exists(saved):
+                    with gzip.open(saved, "rt") as stream:
+                        snapshot = json.load(stream)
+                    with open(agent_details_file, "rb") as stream:
+                        checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+                    if snapshot.get("source_sha256") == checksum:
+                        index = snapshot["routes"]
+                if not index:
+                    with open(agent_details_file, "rb") as stream:
+                        for detail in ijson.items(stream, "item", use_float=True):
+                            index.setdefault(str(detail["route_id"]), detail)
+                self._agent_index = index
+                self._agent_index_version = version
+            return self._agent_index.get(str(route_id))
         
-        return None
-    
+
     def get_all_conflicts(self) -> List[Dict[str, Any]]:
         """Get all conflict resolution details"""
         conflicts_file = os.path.join(os.path.dirname(OUTPUT_FILE), 'conflict_resolutions.json')

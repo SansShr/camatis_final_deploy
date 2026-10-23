@@ -38,28 +38,36 @@ _lgb_models  = None
 _cat_models  = None
 _meta_models = None
 _dl_trainer  = None
+_loaded = False
 
 def _load():
-    global _scaler, _label_enc, _lgb_models, _cat_models, _meta_models, _dl_trainer
-    if _scaler is not None:
+    global _scaler, _label_enc, _lgb_models, _cat_models, _meta_models, _dl_trainer, _loaded
+    if _loaded:
         return
 
-    _scaler    = joblib.load(os.path.join(MODELS_DIR, "scaler.pkl"))
-    _label_enc = joblib.load(os.path.join(MODELS_DIR, "label_encoders.pkl"))
-    _lgb_models  = joblib.load(os.path.join(MODELS_DIR, "lgb_models.pkl"))
-    _cat_models  = joblib.load(os.path.join(MODELS_DIR, "catboost_models.pkl"))
-    _meta_models = joblib.load(os.path.join(MODELS_DIR, "meta_models.pkl"))
+    # Publish a complete set only after all required files load successfully.
+    # A failed first load must not poison subsequent prediction attempts.
+    scaler = joblib.load(os.path.join(MODELS_DIR, "scaler.pkl"))
+    label_enc = joblib.load(os.path.join(MODELS_DIR, "label_encoders.pkl"))
+    lgb_models = joblib.load(os.path.join(MODELS_DIR, "lgb_models.pkl"))
+    cat_models = joblib.load(os.path.join(MODELS_DIR, "catboost_models.pkl"))
+    meta_models = joblib.load(os.path.join(MODELS_DIR, "meta_models.pkl"))
 
     # Deep-learning model (optional – skip if import fails)
     try:
         import sys
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
         from camatis.stage3_deep_learning import DeepLearningTrainer
-        _dl_trainer = DeepLearningTrainer(input_dim=17)
-        _dl_trainer.load_model()
+        dl_trainer = DeepLearningTrainer(input_dim=17)
+        dl_trainer.load_model()
     except Exception as e:
         print(f"[Predict] DL model not loaded (will use LGB only): {e}")
-        _dl_trainer = None
+        dl_trainer = None
+
+    _scaler, _label_enc = scaler, label_enc
+    _lgb_models, _cat_models, _meta_models = lgb_models, cat_models, meta_models
+    _dl_trainer = dl_trainer
+    _loaded = True
 
 
 # ── Feature engineering from raw form inputs ─────────────────────────────────
@@ -185,17 +193,15 @@ def predict_route(inp: dict) -> dict:
     cat_util   = int(_cat_models["utilization"].predict(X)[0]) if "utilization" in _cat_models else 0
 
     # ── Meta predictions (XGBoost stacking) ──
-    # Build meta-features the way stage4_meta_ensemble does
-    meta_X = np.column_stack([
-        [lgb_demand], [lgb_load],
-        [cat_demand], [cat_load],
-        [dl_demand],  [dl_load],
-    ])
+    # Match stage4_meta_ensemble: 17 input features plus the three
+    # task-specific predictions. A six-column mix silently bypassed stacking.
+    meta_demand_X = np.column_stack([X, [lgb_demand], [cat_demand], [dl_demand]])
+    meta_load_X = np.column_stack([X, [lgb_load], [cat_load], [dl_load]])
 
     try:
-        final_demand  = float(_meta_models["demand"].predict(meta_X)[0])
-        final_load    = float(_meta_models["load"].predict(meta_X)[0])
-        final_util    = int(_meta_models["utilization"].predict(meta_X)[0]) if "utilization" in _meta_models else cat_util
+        final_demand  = float(_meta_models["demand"].predict(meta_demand_X)[0])
+        final_load    = float(_meta_models["load"].predict(meta_load_X)[0])
+        final_util    = cat_util
     except Exception:
         final_demand  = lgb_demand
         final_load    = lgb_load

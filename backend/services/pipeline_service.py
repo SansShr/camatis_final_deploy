@@ -41,6 +41,13 @@ class PipelineService:
             from backend.services.predict_service import predict_route
             return predict_route(inputs)
 
+    def prepare_prediction(self) -> Dict[str, Any]:
+        """Idempotently warm the models before accepting a form submission."""
+        with self._inference_lock:
+            from backend.services.predict_service import _load
+            _load()
+        return {"ready": True, "status": "ready"}
+
     def _run_inference(self) -> Dict[str, Any]:
         """Run your existing pipeline inference"""
         print("[Pipeline] run_inference called")

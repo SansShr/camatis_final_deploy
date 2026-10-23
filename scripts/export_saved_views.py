@@ -6,6 +6,7 @@ No inference or optimization is performed here.
 """
 
 import gzip
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -48,6 +49,32 @@ def export():
             except (ValueError, AttributeError):
                 conflict["final_action"] = "Adjust bus service on this route"
     (public / "saved-conflicts.json.gz").write_bytes(gzip.compress(json.dumps(conflicts, separators=(",", ":")).encode(), mtime=0))
+    # Index one actual saved assessment per route, matching the API's first
+    # recorded observation. Keep the original scores/reasoning intact.
+    import ijson
+    source = ROOT / "agent_route_details.json"
+    details = {}
+    with source.open("rb") as stream:
+        for detail in ijson.items(stream, "item", use_float=True):
+            if detail["route_id"] > 0:
+                details.setdefault(str(detail["route_id"]), detail)
+    for route in results:
+        rid = str(route["route_id"])
+        if route["route_id"] > 0 and rid not in details:
+            details[rid] = {
+                "route_id": route["route_id"], "agent_scores": [],
+                "conflict_resolution": None, "blackboard_state": {},
+                "final_decision": {
+                    "assessment_status": "summary_only", "demand": route["demand_after"],
+                    "buses_added": route["buses_added"],
+                    "frequency_multiplier": route["frequency_multiplier"],
+                    "actions": route["actions"],
+                },
+            }
+    payload = {"source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "routes": details}
+    content = gzip.compress(json.dumps(payload, separators=(",", ":")).encode(), mtime=0)
+    (ROOT / "backend" / "saved_route_checks.json.gz").write_bytes(content)
+    (public / "saved-agent-data.json.gz").write_bytes(content)
     print(f"Saved {len(results)} route results and {len(conflicts)} conflict records")
 
 

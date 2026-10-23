@@ -267,6 +267,16 @@ def get_agent_scores(route_id: int):
 
 # ============== Real-time Prediction Route ==============
 
+@router.get("/predict/ready")
+def prepare_prediction():
+    """Wake-up/readiness probe; never substitutes saved data for a prediction."""
+    try:
+        return pipeline_service.prepare_prediction()
+    except Exception:
+        import logging
+        logging.exception("Prediction model preparation failed")
+        raise HTTPException(status_code=500, detail="Prediction models could not be loaded. Please retry.")
+
 @router.post("/predict", response_model=PredictResponse)
 def predict_route(request: PredictRequest):
     """

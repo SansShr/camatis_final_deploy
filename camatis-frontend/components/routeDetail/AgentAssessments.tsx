@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Brain, Shield, Wrench, Cloud, TrafficCone, Users, Bus, Calendar, AlertCircle, CheckCircle, AlertTriangle } from "lucide-react";
 import { useEffect, useState } from "react";
-import { getRouteAgentDetail } from "@/lib/api";
+import { getRouteAgentDetail, getDataSource } from "@/lib/api";
 
 interface AgentScore {
   agent_name: string;
@@ -176,21 +176,38 @@ function friendlyReason(raw: string, agentName: string, score: number, emergency
 export default function AgentAssessments({ routeId }: { routeId: string }) {
   const [detail, setDetail]   = useState<AgentDecisionDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    let inFlight = false;
+    setLoading(true);
+    setFailed(false);
+    setDetail(null);
     const fetch = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const numericId = parseInt(routeId.replace("R-", ""));
-        const data = await getRouteAgentDetail(numericId);
-        setDetail(data);
+        const data = await getRouteAgentDetail(numericId, true);
+        if (active) {
+          setDetail(data);
+          setSaved(getDataSource(`/agents/route/${numericId}`) === "saved");
+          setFailed(false);
+        }
       } catch (e) {
-        console.error(e);
+        if (active) setFailed(true);
       } finally {
-        setLoading(false);
+        inFlight = false;
+        if (active) setLoading(false);
       }
     };
     fetch();
-  }, [routeId]);
+    const timer = setInterval(fetch, 30000);
+    return () => { active = false; clearInterval(timer); };
+  }, [routeId, retry]);
 
   if (loading) return (
     <Card>
@@ -200,10 +217,23 @@ export default function AgentAssessments({ routeId }: { routeId: string }) {
     </Card>
   );
 
-  if (!detail || !detail.agent_scores?.length) return (
+  if (!detail) return (
     <Card>
-      <CardContent className="text-center py-8 text-slate-500 text-sm">
-        No checks available for this route yet.
+      <CardContent className="py-8 text-center text-sm text-slate-600" role="alert">
+        <p>Route checks could not be loaded. Retrying automatically.</p>
+        <button className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white" onClick={() => setRetry(value => value + 1)}>Try again</button>
+      </CardContent>
+    </Card>
+  );
+
+  if (detail.final_decision?.assessment_status === "summary_only") return (
+    <Card>
+      <CardHeader><CardTitle>Saved Route Recommendations</CardTitle></CardHeader>
+      <CardContent className="space-y-2 text-sm text-slate-700">
+        <p>Daily passengers: {Math.round(detail.final_decision.demand).toLocaleString()}</p>
+        <p>Additional buses recommended: {detail.final_decision.buses_added}</p>
+        <p>Service frequency: {detail.final_decision.frequency_multiplier}×</p>
+        <p>Detailed safety assessments were not recorded for this route in the saved run.</p>
       </CardContent>
     </Card>
   );
@@ -218,6 +248,7 @@ export default function AgentAssessments({ routeId }: { routeId: string }) {
 
   return (
     <div className="space-y-6">
+      {(saved || failed) && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Showing saved route checks. Refreshing automatically.</p>}
 
       {/* ── Route summary bar ── */}
       {(dailyPassengers || busFull) && (

@@ -5,7 +5,7 @@ const BASE = "/api";
 type SavedResponse = { data: unknown; savedAt: string };
 const responseCache = new Map<string, SavedResponse>();
 const dataSources = new Map<string, "backend" | "saved">();
-const CACHE_PREFIX = "camatis:read-v1:";
+const CACHE_PREFIX = "camatis:read-v2:";
 
 export const getDataSource = (path: string) => dataSources.get(path);
 
@@ -20,7 +20,7 @@ function remember(path: string, value: SavedResponse) {
 
 function cachedResponse(path: string): SavedResponse | undefined {
   const cached = responseCache.get(path);
-  if (cached) return cached;
+  if (cached && validData(path, cached.data)) return cached;
   if (typeof window === "undefined") return;
   try {
     const raw = window.localStorage.getItem(CACHE_PREFIX + path);
@@ -40,6 +40,11 @@ function validData(path: string, value: unknown): boolean {
     const stats = (value as DashboardData).stats;
     return !!stats && Number.isFinite(stats.total_routes) && stats.total_routes > 0;
   }
+  if (path.startsWith("/agents/route/")) {
+    const detail = value as AgentDecisionDetail;
+    return Array.isArray(detail.agent_scores) && (detail.agent_scores.length > 0 || detail.final_decision?.assessment_status === "summary_only");
+  }
+  if (path.startsWith("/agents/scores/")) return Array.isArray(value) && value.length > 0;
   if (path.startsWith("/route/")) {
     const detail = value as RouteDetail;
     return Array.isArray(detail.demand_trend) && detail.demand_trend.length > 0;
@@ -74,6 +79,17 @@ async function savedSnapshot(): Promise<Record<string, unknown>> {
   return snapshotPromise;
 }
 
+let agentSnapshotPromise: Promise<{ routes: Record<string, AgentDecisionDetail> }> | undefined;
+async function agentSnapshot(path: string): Promise<unknown> {
+  if (!agentSnapshotPromise) {
+    agentSnapshotPromise = fetchJson("/saved-agent-data.json.gz", 10000)
+      .then(data => data as { routes: Record<string, AgentDecisionDetail> })
+      .catch(error => { agentSnapshotPromise = undefined; throw error; });
+  }
+  const data = (await agentSnapshotPromise).routes[path.split("/").pop()!];
+  return path.startsWith("/agents/scores/") ? data?.agent_scores : data;
+}
+
 async function get<T>(path: string, fallback: T, throwOnError = false): Promise<T> {
   try {
     const data = await fetchJson(`${BASE}${path}`, 12000);
@@ -88,9 +104,11 @@ async function get<T>(path: string, fallback: T, throwOnError = false): Promise<
       return cached.data as T;
     }
     try {
-      const snapshot = path === "/agents/conflicts"
-        ? { [path]: await fetchJson("/saved-conflicts.json.gz", 15000) }
-        : await savedSnapshot();
+      const snapshot = /^\/agents\/(route|scores)\/\d+$/.test(path)
+        ? { [path]: await agentSnapshot(path) }
+        : path === "/agents/conflicts"
+          ? { [path]: await fetchJson("/saved-conflicts.json.gz", 15000) }
+          : await savedSnapshot();
       if (validData(path, snapshot[path])) {
         dataSources.set(path, "saved");
         return snapshot[path] as T;
@@ -102,6 +120,10 @@ async function get<T>(path: string, fallback: T, throwOnError = false): Promise<
   }
 }
 
+class ApiError extends Error {
+  constructor(message: string, public status: number) { super(message); }
+}
+
 async function post<T>(path: string, body?: any): Promise<T> {
   try {
     const res = await fetch(`${BASE}${path}`, {
@@ -109,8 +131,8 @@ async function post<T>(path: string, body?: any): Promise<T> {
       headers: { "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
+    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status);
+    return await res.json();
   } catch (err) {
     console.error(`API Error for POST ${path}:`, err);
     throw err;
@@ -326,13 +348,13 @@ export const getAgentSystemStatus = () => get<AgentSystemStatus>("/agents/status
   average_trust_weights: {}
 });
 
-export const getRouteAgentDetail = (routeId: number) => get<AgentDecisionDetail>(`/agents/route/${routeId}`, {
+export const getRouteAgentDetail = (routeId: number, throwOnError = false) => get<AgentDecisionDetail>(`/agents/route/${routeId}`, {
   route_id: routeId,
   agent_scores: [],
   conflict_resolution: null,
   final_decision: {},
   blackboard_state: {}
-});
+}, throwOnError);
 
 export const getAllConflicts = () => get<ConflictResolution[]>("/agents/conflicts", []);
 
@@ -376,5 +398,69 @@ export interface PredictResponse {
   driven_by_realtime: boolean;
 }
 
-export const postPredict = (data: PredictRequest) =>
-  post<PredictResponse>("/predict", data);
+const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+let preparation: Promise<void> | undefined;
+let modelsReadyAt = 0;
+
+// Deduplicate preparation across mounts/submissions. Free instances may need
+// more than a minute to wake; never replace a computed prediction with a cache.
+export function preparePrediction(): Promise<void> {
+  if (Date.now() - modelsReadyAt < 30000) return Promise.resolve();
+  if (!preparation) {
+    preparation = (async () => {
+      const deadline = Date.now() + 240000;
+      while (Date.now() < deadline) {
+        try {
+          const res = await requestReadiness(Math.min(60000, deadline - Date.now()));
+          if (res.ready === true) { modelsReadyAt = Date.now(); return; }
+        } catch (error) {
+          if (error instanceof ApiError && ![502, 503, 504].includes(error.status)) throw error;
+        }
+        await pause(2000);
+      }
+      throw new Error("The prediction service is taking longer to start. Please try again shortly.");
+    })().finally(() => { preparation = undefined; });
+  }
+  return preparation;
+}
+
+async function requestReadiness(timeoutMs: number): Promise<{ ready: boolean }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${BASE}/predict/ready`, { cache: "no-store", signal: controller.signal });
+    if (!res.ok) throw new ApiError("Prediction models could not be prepared. Please try again.", res.status);
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+
+export async function postPredict(data: PredictRequest, progress?: (message: string) => void): Promise<PredictResponse> {
+  progress?.("Starting the prediction service and loading models…");
+  await preparePrediction();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    progress?.(attempt ? "Reconnecting and calculating your prediction…" : "Calculating your prediction…");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 150000);
+    try {
+      const res = await fetch(`${BASE}/predict`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data), signal: controller.signal,
+      });
+      if (!res.ok) throw new ApiError(
+        res.status === 422 ? "Please check that the form values are within the allowed ranges."
+          : "The prediction service could not complete this request. Please try again.", res.status);
+      const result = await res.json() as PredictResponse;
+      if (result.route_id !== data.route_id || !Number.isFinite(result.predicted_demand))
+        throw new Error("The prediction service returned an incomplete result.");
+      return result;
+    } catch (error) {
+      if (error instanceof ApiError && ![502, 503, 504].includes(error.status)) throw error;
+      if (attempt === 2) throw new Error("The prediction service is temporarily unavailable. Please try again shortly.");
+      modelsReadyAt = 0;
+      progress?.("Reconnecting to the prediction service…");
+      await pause(2000);
+      await preparePrediction();
+    } finally { clearTimeout(timer); }
+  }
+  throw new Error("Prediction could not be completed.");
+}

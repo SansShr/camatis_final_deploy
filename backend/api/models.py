@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
 # Login Models
@@ -153,16 +153,16 @@ class BlackboardSnapshot(BaseModel):
 # ── Real-time Prediction Models ──────────────────────────────────────────────
 
 class PredictRequest(BaseModel):
-    route_id:        int   = 7
-    hour:            int   = 9       # 0-23
-    day_of_week:     int   = 1       # 0=Mon, 6=Sun
-    is_peak:         int   = 1       # 1=rush hour, 0=off-peak
-    is_weekend:      int   = 0
-    speed_kmph:      float = 55.0    # actual bus speed
-    congestion:      float = 1.2     # 0=free flow, 3=gridlock
-    passenger_count: int   = 30      # passengers currently on the bus
-    bus_capacity:    int   = 50      # total seats
-    weather_rain:    int   = 0       # 1=raining
+    route_id:        int   = Field(7, gt=0)
+    hour:            int   = Field(9, ge=0, le=23)
+    day_of_week:     int   = Field(1, ge=0, le=6)
+    is_peak:         int   = Field(1, ge=0, le=1)
+    is_weekend:      int   = Field(0, ge=0, le=1)
+    speed_kmph:      float = Field(55.0, ge=0, le=150)
+    congestion:      float = Field(1.2, ge=0, le=3)
+    passenger_count: int   = Field(30, ge=0, le=10000)
+    bus_capacity:    int   = Field(50, gt=0, le=500)
+    weather_rain:    int   = Field(0, ge=0, le=1)
 
 class PredictResponse(BaseModel):
     route_id:           Any

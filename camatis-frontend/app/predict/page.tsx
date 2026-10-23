@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
-import { postPredict, PredictRequest, PredictResponse } from "@/lib/api";
+import { postPredict, preparePrediction, PredictRequest, PredictResponse } from "@/lib/api";
 import {
   Bus, Clock, Users, CloudRain, AlertTriangle,
   CheckCircle, TrendingUp, Zap, Info, ChevronRight, BarChart2
@@ -284,21 +284,35 @@ export default function PredictPage() {
   const [result,  setResult]  = useState<PredictResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
+  const [serviceState, setServiceState] = useState("Preparing prediction service… You can fill in the form while it starts.");
+  const [progress, setProgress] = useState("");
+  const submitting = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    preparePrediction().then(() => { if (active) setServiceState("Prediction service ready"); })
+      .catch(() => { if (active) setServiceState("The service is starting. Submitting the form will reconnect automatically."); });
+    return () => { active = false; };
+  }, []);
 
   const set = (key: keyof PredictRequest, value: number) =>
     setForm(f => ({ ...f, [key]: value }));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setLoading(true);
     setError("");
     setResult(null);
     try {
-      const res = await postPredict(form);
+      const res = await postPredict(form, setProgress);
+      setServiceState("Prediction service ready");
       setResult(res);
     } catch (err: any) {
-      setError("Could not get a prediction. Please check the values and try again.");
+      setError(err instanceof Error ? err.message : "Prediction is temporarily unavailable. Please try again.");
     } finally {
+      submitting.current = false;
       setLoading(false);
     }
   };
@@ -319,6 +333,10 @@ export default function PredictPage() {
           </p>
         </div>
 
+        <p role="status" className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+          {loading ? progress : serviceState}
+          {serviceState !== "Prediction service ready" && !result && " After inactivity, startup can take a few minutes."}
+        </p>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
 
           {/* ── Form ── */}
@@ -504,7 +522,7 @@ export default function PredictPage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Running prediction...
+                  {progress || "Running prediction…"}
                 </span>
               ) : (
                 "Get Prediction →"
@@ -523,7 +541,7 @@ export default function PredictPage() {
                   Fill in the form and click &quot;Get Prediction&quot;
                 </p>
                 <p className="text-xs text-slate-400">
-                  Results will appear here instantly
+                  Results will appear here after the prediction completes
                 </p>
               </div>
             )}
