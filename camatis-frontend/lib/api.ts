@@ -121,7 +121,7 @@ async function get<T>(path: string, fallback: T, throwOnError = false): Promise<
 }
 
 class ApiError extends Error {
-  constructor(message: string, public status: number) { super(message); }
+  constructor(message: string, public status: number, public retryAfterMs = 0) { super(message); }
 }
 
 async function post<T>(path: string, body?: any): Promise<T> {
@@ -401,16 +401,50 @@ export interface PredictResponse {
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 let preparation: Promise<void> | undefined;
 let modelsReadyAt = 0;
+let predictionRetryAt = 0;
+const preparationListeners = new Set<(message: string) => void>();
+const busyMessage = "The prediction service is busy. Please wait a few minutes before trying again.";
+
+function retryAfterMs(res: Response): number {
+  const value = res.headers.get("Retry-After");
+  if (!value) return 0;
+  const seconds = Number(value);
+  const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
+function retryablePredictionError(error: unknown): boolean {
+  return !(error instanceof ApiError) || [408, 429, 502, 503, 504].includes(error.status);
+}
+
+async function waitForPredictionRetry(deadline: number) {
+  const delay = predictionRetryAt - Date.now();
+  if (delay <= 0) return;
+  if (delay >= deadline - Date.now()) throw new Error(busyMessage);
+  await pause(delay);
+}
+
+async function retryPrediction(error: unknown, attempt: number, deadline: number, progress?: (message: string) => void) {
+  const rateLimited = error instanceof ApiError && error.status === 429;
+  const backoff = Math.min(30000, 5000 * 2 ** Math.min(attempt, 3)) + Math.round(Math.random() * 1000);
+  const delay = Math.max(backoff, rateLimited ? Math.max(10000, error.retryAfterMs) : 0);
+  predictionRetryAt = Math.max(predictionRetryAt, Date.now() + delay);
+  progress?.(`${rateLimited ? "The service is busy" : "The service is starting"}; reconnecting in ${Math.ceil((predictionRetryAt - Date.now()) / 1000)} seconds…`);
+  await waitForPredictionRetry(deadline);
+}
 
 // Deduplicate preparation across mounts/submissions. Free instances may need
 // more than a minute to wake; never replace a computed prediction with a cache.
-export function preparePrediction(): Promise<void> {
+export function preparePrediction(progress?: (message: string) => void): Promise<void> {
   if (Date.now() - modelsReadyAt < 30000) return Promise.resolve();
+  if (progress) preparationListeners.add(progress);
   if (!preparation) {
     preparation = (async () => {
       const deadline = Date.now() + 240000;
       let awake = false;
+      let attempt = 0;
       while (Date.now() < deadline) {
+        await waitForPredictionRetry(deadline);
         try {
           // Wake the process with a lightweight request before asking it to
           // load models. A sleeping Render instance may return a proxy page.
@@ -422,14 +456,16 @@ export function preparePrediction(): Promise<void> {
           const res = await requestReadiness(Math.min(60000, deadline - Date.now()));
           if (res.ready === true) { modelsReadyAt = Date.now(); return; }
         } catch (error) {
-          if (error instanceof ApiError && ![502, 503, 504].includes(error.status)) throw error;
+          if (!retryablePredictionError(error)) throw error;
+          await retryPrediction(error, attempt++, deadline, message => preparationListeners.forEach(listener => listener(message)));
+          continue;
         }
-        await pause(2000);
+        await retryPrediction(undefined, attempt++, deadline);
       }
       throw new Error("The prediction service is taking longer to start. Please try again shortly.");
     })().finally(() => { preparation = undefined; });
   }
-  return preparation;
+  return preparation.finally(() => { if (progress) preparationListeners.delete(progress); });
 }
 
 async function requestReadiness(timeoutMs: number): Promise<{ ready: boolean }> {
@@ -443,6 +479,7 @@ async function predictionProbe(path: "/health" | "/predict/ready", timeoutMs: nu
     const res = await fetch(`${BASE}${path}`, { cache: "no-store", signal: controller.signal });
     const body = await res.json().catch(() => null);
     if (!res.ok) {
+      if (res.status === 429) throw new ApiError(busyMessage, 429, retryAfterMs(res));
       // Only the backend's explicit model error proves loading failed. Proxy
       // 500s (as well as 502/503/504) are temporary startup failures to retry.
       if (res.status === 500 && body?.detail === "Prediction models could not be loaded. Please retry.")
@@ -457,8 +494,10 @@ async function predictionProbe(path: "/health" | "/predict/ready", timeoutMs: nu
 
 export async function postPredict(data: PredictRequest, progress?: (message: string) => void): Promise<PredictResponse> {
   progress?.("Starting the prediction service and loading models…");
-  await preparePrediction();
+  await preparePrediction(progress);
+  const deadline = Date.now() + 450000;
   for (let attempt = 0; attempt < 3; attempt++) {
+    await waitForPredictionRetry(deadline);
     progress?.(attempt ? "Reconnecting and calculating your prediction…" : "Calculating your prediction…");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 150000);
@@ -469,18 +508,26 @@ export async function postPredict(data: PredictRequest, progress?: (message: str
       });
       if (!res.ok) throw new ApiError(
         res.status === 422 ? "Please check that the form values are within the allowed ranges."
-          : "The prediction service could not complete this request. Please try again.", res.status);
+          : res.status === 429 ? busyMessage
+          : "The prediction service could not complete this request. Please try again.", res.status, retryAfterMs(res));
       const result = await res.json() as PredictResponse;
       if (result.route_id !== data.route_id || !Number.isFinite(result.predicted_demand))
         throw new Error("The prediction service returned an incomplete result.");
       return result;
     } catch (error) {
-      if (error instanceof ApiError && ![502, 503, 504].includes(error.status)) throw error;
-      if (attempt === 2) throw new Error("The prediction service is temporarily unavailable. Please try again shortly.");
+      if (!retryablePredictionError(error)) throw error;
+      if (attempt === 2) {
+        if (error instanceof ApiError && error.status === 429) {
+          predictionRetryAt = Math.max(predictionRetryAt, Date.now() + Math.max(30000, error.retryAfterMs));
+          throw new Error(busyMessage);
+        }
+        throw new Error("The prediction service is temporarily unavailable. Please try again shortly.");
+      }
+      await retryPrediction(error, attempt, deadline, progress);
+      if (error instanceof ApiError && error.status === 429) continue;
       modelsReadyAt = 0;
       progress?.("Reconnecting to the prediction service…");
-      await pause(2000);
-      await preparePrediction();
+      await preparePrediction(progress);
     } finally { clearTimeout(timer); }
   }
   throw new Error("Prediction could not be completed.");

@@ -295,7 +295,7 @@ export default function PredictPage() {
 
   useEffect(() => {
     let active = true;
-    preparePrediction().then(() => { if (active) setServiceState("Prediction service ready"); })
+    preparePrediction(message => { if (active) setServiceState(message); }).then(() => { if (active) setServiceState("Prediction service ready"); })
       .catch(() => { if (active) setServiceState("The service is starting. Submitting the form will reconnect automatically."); });
     return () => { active = false; };
   }, []);
