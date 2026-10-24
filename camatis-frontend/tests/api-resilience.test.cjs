@@ -219,3 +219,17 @@ test("429 without Retry-After uses a growing delay instead of hammering startup"
   assert.ok(attempts[1]-attempts[0]>=10000);
   assert.ok(attempts[3]-attempts[2]>=20000);
 });
+
+test("a 40-second wake-up can finish in one request without an early abort", async () => {
+  let healthCalls=0;
+  const api=client((url,{signal}) => {
+    if(!url.endsWith("/health"))return Response.json({ready:true});
+    if(++healthCalls>1)return new Response("Unexpected repeated wake-up",{status:422});
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>resolve(Response.json({status:"healthy"})),40);
+      signal.addEventListener("abort",()=>{clearTimeout(timer);reject(new Error("aborted"));},{once:true});
+    });
+  },new Map(),{setTimeout:(fn,ms)=>setTimeout(fn,ms/1000),clearTimeout});
+  await api.preparePrediction();
+  assert.equal(healthCalls,1);
+});

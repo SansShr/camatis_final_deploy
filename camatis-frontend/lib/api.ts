@@ -449,7 +449,7 @@ export function preparePrediction(progress?: (message: string) => void): Promise
           // Wake the process with a lightweight request before asking it to
           // load models. A sleeping Render instance may return a proxy page.
           if (!awake) {
-            const health = await predictionProbe("/health", Math.min(12000, deadline - Date.now()));
+            const health = await predictionProbe("/health", Math.min(60000, deadline - Date.now()));
             if (health.status !== "healthy") throw new Error("Prediction service is starting.");
             awake = true;
           }
