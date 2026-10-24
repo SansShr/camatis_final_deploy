@@ -10,9 +10,10 @@ const code = ts.transpileModule(fs.readFileSync(path.join(root, "lib/api.ts"), "
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function client(apiFetch, storage = new Map(), timers = { setTimeout, clearTimeout }) {
+function client(apiFetch, storage = new Map(), timers = { setTimeout, clearTimeout }, apiBase = "") {
   const context = {
     exports: {}, AbortController, Response, DecompressionStream,
+    process: {env: {NEXT_PUBLIC_API_BASE: apiBase}},
     ...timers, console: { error() {} },
     window: { localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } },
     fetch: async (url, options) => url.startsWith("/saved-")
@@ -21,6 +22,21 @@ function client(apiFetch, storage = new Map(), timers = { setTimeout, clearTimeo
   vm.runInNewContext(code, context);
   return context.exports;
 }
+
+test("production reads and predictions contact the public API directly", async () => {
+  const base="https://camatis-final-backend.onrender.com/api", urls=[];
+  const api=client(url=>{
+    urls.push(url);
+    if(url===base+"/health")return Response.json({status:"healthy"});
+    if(url===base+"/predict/ready")return Response.json({ready:true});
+    if(url===base+"/predict")return Response.json({route_id:7,predicted_demand:327});
+    if(url===base+"/results")return Response.json([{route_id:7,buses_added:3}]);
+    throw new Error("Unexpected request: "+url);
+  },new Map(),{setTimeout,clearTimeout},base);
+  assert.equal((await api.getResults(true))[0].route_id,7);
+  assert.equal((await api.postPredict({route_id:7})).predicted_demand,327);
+  assert.deepEqual(urls,[base+"/results",base+"/health",base+"/predict/ready",base+"/predict"]);
+});
 
 for (const [name, response] of [
   ["HTTP 503", () => new Response("Starting", { status: 503 })],

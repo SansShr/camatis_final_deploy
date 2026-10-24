@@ -1,4 +1,6 @@
-const BASE = "/api";
+// Production browsers contact the public backend directly. Proxying requests
+// through another sleeping free service can fail before the API ever sees them.
+const BASE = process.env.NEXT_PUBLIC_API_BASE || "/api";
 
 // Only successful GET responses are cached. Never cache login, settings writes,
 // predictions, or optimization requests as if they had succeeded.
